@@ -92,7 +92,7 @@ object Prismic extends Controller {
   // -- Fetch the API entry document
   def apiHome(accessToken: Option[String] = None)(implicit rh: RequestHeader) = {
     Helpers.prismicRepository.map { repository =>
-      Api.get(config(s"https://$repository.prismic.io/api"), accessToken = accessToken, cache = Cache, logger = Logger)
+      Api.get(s"https://$repository.prismic.io/api", accessToken = accessToken, cache = Cache, logger = Logger)
     }.getOrElse {
       sys.error("How can we get there without a proper URL?")
     }
