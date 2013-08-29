@@ -90,7 +90,9 @@ object Prismic extends Controller {
   def ctx(implicit req: Request[_]) = req.ctx
   
   // -- Fetch the API entry document
-  def apiHome(accessToken: Option[String] = None) = Api.get(config("prismic.api"), accessToken = accessToken, cache = Cache, logger = Logger)
+  def apiHome(accessToken: Option[String] = None)(implicit rh: RequestHeader) = {
+    Api.get(config(s"https://${Helpers.prismicRepository}.prismic.io/api"), accessToken = accessToken, cache = Cache, logger = Logger)
+  }
 
   // -- Helper: Retrieve a single document by Id
   def getDocument(id: String)(implicit ctx: Prismic.Context): Future[Option[Document]] = {

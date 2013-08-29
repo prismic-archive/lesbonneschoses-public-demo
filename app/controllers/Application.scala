@@ -12,6 +12,23 @@ import Play.current
 
 import io.prismic._
 
+object Helpers {
+
+  val DomainRegex = """(lesbonneschoses([^.]+))[.]prismic[.]me""".r
+
+  def prismicRepository(implicit request: RequestHeader): Option[String] = {
+    request.domain match {
+      case DomainRegex(_, repository) => Some(repository)
+      case _ => None
+    }
+  }
+
+  def landingPage = Action {
+    Results.Ok("prismic.me")
+  }
+
+}
+
 /**
  * Main controller for the Website.
  *
