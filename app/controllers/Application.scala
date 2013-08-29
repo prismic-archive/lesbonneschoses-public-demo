@@ -14,11 +14,11 @@ import io.prismic._
 
 object Helpers {
 
-  val DomainRegex = """(lesbonneschoses([^.]+))[.]prismic[.]me""".r
+  val DomainRegex = """(lesbonneschoses([^.]*))[.]prismic[.]me""".r
 
   def prismicRepository(implicit request: RequestHeader): Option[String] = {
     request.domain match {
-      case DomainRegex(_, repository) => Some(repository)
+      case DomainRegex(repository, _) => Some(repository)
       case _ => None
     }
   }
