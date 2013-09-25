@@ -13,7 +13,7 @@ object Global extends GlobalSettings {
     Helpers.prismicRepository(request).map { _ =>
       super.onRouteRequest(request)
     }.getOrElse {
-      Some(Helpers.landingPage)
+      Some(Action(_ => Results.Redirect("https://prismic.io")))
     }
   }
 
@@ -21,6 +21,10 @@ object Global extends GlobalSettings {
     Application.PageNotFound(
       Await.result(Prismic.buildContext(request.queryString.get("ref").flatMap(_.headOption))(request), atMost = 2 seconds) // FIX ME
     )
+  }
+
+  override def onError(request: RequestHeader, e: Throwable) = {
+    Results.InternalServerError("Unexpected error")
   }
 
 }

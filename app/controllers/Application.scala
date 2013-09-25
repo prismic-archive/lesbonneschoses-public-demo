@@ -23,10 +23,6 @@ object Helpers {
     }
   }
 
-  def landingPage = Action {
-    Results.Ok("prismic.me")
-  }
-
 }
 
 /**
