@@ -18,9 +18,9 @@ object Global extends GlobalSettings {
   }
 
   override def onHandlerNotFound(request: RequestHeader) = {
-    Application.PageNotFound(
-      Await.result(Prismic.buildContext(request.queryString.get("ref").flatMap(_.headOption))(request), atMost = 2 seconds) // FIX ME
-    )
+    Prismic.buildContext(request.queryString.get("ref").flatMap(_.headOption))(request).map { api =>
+      Application.PageNotFound(api)
+    }
   }
 
   override def onError(request: RequestHeader, e: Throwable) = {
