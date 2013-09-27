@@ -24,7 +24,7 @@ object Global extends GlobalSettings {
   }
 
   override def onError(request: RequestHeader, e: Throwable) = {
-    Results.InternalServerError("Unexpected error")
+    Future.successful(Results.InternalServerError("Unexpected error"))
   }
 
 }
