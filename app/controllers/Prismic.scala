@@ -33,7 +33,19 @@ object Prismic extends Controller {
   private val ACCESS_TOKEN = "ACCESS_TOKEN"
 
   // -- Cache to use (default to keep 200 JSON responses in a LRU cache)
-  private val Cache = BuiltInCache(200)
+  private val Cache = new Cache {
+    private val cache = com.twitter.util.LruMap.makeUnderlying[String,(Long, JsValue)](200)
+
+    override def set(url: String, response: (Long, JsValue)): Unit = {
+      cache.put(url, response)
+    }
+
+    override def get(url: String): Option[JsValue] = {
+      Option(cache.get(url)).collect {
+        case (expiration: Long, json: JsValue) if expiration > System.currentTimeMillis => json
+      }
+    }
+  }
 
   // -- Write debug and error messages to the Play `prismic` logger (check the configuration in application.conf)
   private val Logger = (level: Symbol, message: String) => level match { 
