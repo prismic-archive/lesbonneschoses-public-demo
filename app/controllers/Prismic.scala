@@ -78,8 +78,7 @@ object Prismic extends Controller {
         result <- block(Request(request, ctx))
       } yield result
     ).recover {
-      case ApiError(Error.INVALID_TOKEN, _) => Redirect(routes.Prismic.signin).withNewSession
-      case ApiError(Error.AUTHORIZATION_NEEDED, _) => Redirect(routes.Prismic.signin).withNewSession
+      case ApiError(_, _) => Redirect(routes.Prismic.signin).withNewSession
     }
   }
 
