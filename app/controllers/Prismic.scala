@@ -3,11 +3,11 @@ package controllers
 import play.api._
 import play.api.mvc._
 
-import play.api.libs.ws._
 import play.api.libs.json._
+import play.api.libs.ws._
 
-import scala.concurrent._
 import play.api.libs.concurrent.Execution.Implicits._
+import scala.concurrent._
 
 import Play.current
 
@@ -24,29 +24,21 @@ import io.prismic._
  *
  * It provides an "Action builder" that help to create actions that will query
  * a prismic.io repository.
- *
- * It provides some ready-to-use actions for the OAuth2 workflow.
  */
 object Prismic extends Controller {
-
-  // -- Define the key name to use for storing the Prismic.io access token into the Play session
-  private val ACCESS_TOKEN = "ACCESS_TOKEN"
 
   // -- Cache to use (default to keep 200 JSON responses in a LRU cache)
   private val Cache = new BuiltInCache(200)
 
   // -- Write debug and error messages to the Play `prismic` logger (check the configuration in application.conf)
-  private val Logger = (level: Symbol, message: String) => level match { 
+  private val Logger = (level: Symbol, message: String) => level match {
     case 'DEBUG => play.api.Logger("prismic").debug(message)
     case 'ERROR => play.api.Logger("prismic").error(message)
-    case _ => play.api.Logger("prismic").info(message)
+    case _      => play.api.Logger("prismic").info(message)
   }
-  
+
   // Helper method to read the Play application configuration
   private def config(key: String) = Play.configuration.getString(key).getOrElse(sys.error(s"Missing configuration [$key]"))
-
-  // Compute the callback URL to use for the OAuth worklow
-  private def callbackUrl(implicit rh: RequestHeader) = routes.Prismic.callback(code = None, redirect_uri = rh.headers.get("referer")).absoluteURL()
 
   // -- Define a `Prismic request` that contain both the original request and the Prismic call context
   case class Request[A](request: play.api.mvc.Request[A], ctx: Context) extends WrappedRequest(request)
@@ -56,38 +48,49 @@ object Prismic extends Controller {
     def maybeRef = Option(ref).filterNot(_ == api.master.ref)
     def hasPrivilegedAccess = accessToken.isDefined
   }
-  
+
   object Context {
     implicit def fromRequest(implicit req: Request[_]): Context = req.ctx
   }
 
   // -- Build a Prismic context
-  def buildContext(ref: Option[String])(implicit request: RequestHeader) = {
-    for {
-      api <- apiHome(request.session.get(ACCESS_TOKEN).orElse(Play.configuration.getString("prismic.token")))
-    } yield {
-      Context(api, ref.map(_.trim).filterNot(_.isEmpty).getOrElse(api.master.ref), request.session.get(ACCESS_TOKEN), Application.linkResolver(api, ref.filterNot(_ == api.master.ref))(request))
+  def buildContext(implicit request: RequestHeader) = {
+    val maybeAccessToken = Play.configuration.getString("prismic.token")
+    apiHome(maybeAccessToken) map { api =>
+      val ref = { 
+        // First check if there is a preview token in a cookie
+        request.cookies.get(io.prismic.Prismic.previewCookie).map(_.value)
+      }.orElse {
+        // Otherwise check if user must see a specific experiment variation
+        request.cookies.get(io.prismic.Prismic.experimentsCookie).map(_.value).flatMap(api.experiments.refFromCookie)
+      }.getOrElse {
+        // Otherwise use the master ref 
+        api.master.ref
+      }
+      Context(api, ref, maybeAccessToken, Application.linkResolver(api)(request))
     }
   }
 
   // -- Action builder
-  def action[A](bodyParser: BodyParser[A])(ref: Option[String] = None)(block: Prismic.Request[A] => Future[SimpleResult]) = Action.async(bodyParser) { implicit request =>
+  def bodyAction[A](bodyParser: BodyParser[A])(block: Prismic.Request[A] => Future[Result]) = Action.async(bodyParser) { implicit request =>
     (
       for {
-        ctx <- buildContext(ref)
+        ctx <- buildContext
         result <- block(Request(request, ctx))
       } yield result
     ).recover {
-      case ApiError(_, _) => Redirect(routes.Prismic.signin).withNewSession
+      case e: ApiError => InternalServerError(e.getMessage).discardingCookies(
+        DiscardingCookie(name = io.prismic.Prismic.previewCookie, path = "/")
+      )
     }
   }
 
   // -- Alternative action builder for the default body parser
-  def action(ref: Option[String] = None)(block: Prismic.Request[AnyContent] => Future[SimpleResult]): Action[AnyContent] = action(parse.anyContent)(ref)(block)
+  def action(block: Prismic.Request[AnyContent] => Future[Result]): Action[AnyContent] = bodyAction(parse.anyContent)(block)
 
   // -- Retrieve the Prismic Context from a request handled by an built using Prismic.action
   def ctx(implicit req: Request[_]) = req.ctx
-  
+
   // -- Fetch the API entry document
   def apiHome(accessToken: Option[String] = None)(implicit rh: RequestHeader) = {
     Helpers.prismicRepository.map { repository =>
@@ -102,7 +105,7 @@ object Prismic extends Controller {
     for {
       documents <- ctx.api.forms("everything").query(s"""[[:d = at(document.id, "$id")]]""").ref(ctx.ref).submit()
     } yield {
-      documents.headOption
+      documents.results.headOption
     }
   }
 
@@ -110,7 +113,8 @@ object Prismic extends Controller {
   def getDocuments(ids: String*)(implicit ctx: Prismic.Context): Future[Seq[Document]] = {
     ids match {
       case Nil => Future.successful(Nil)
-      case ids => ctx.api.forms("everything").query(s"""[[:d = any(document.id, ${ids.mkString("[\"","\",\"","\"]")})]]""").ref(ctx.ref).submit()
+      case ids => ctx.api.forms("everything")
+        .query(s"""[[:d = any(document.id, ${ids.mkString("[\"", "\",\"", "\"]")})]]""").ref(ctx.ref).submit() map (_.results)
     }
   }
 
@@ -120,53 +124,19 @@ object Prismic extends Controller {
   }
 
   // -- Helper: Check if the slug is valid and redirect to the most recent version id needed
-  def checkSlug(document: Option[Document], slug: String)(callback: Either[String,Document] => SimpleResult)(implicit r: Prismic.Request[_]) = {
+  def checkSlug(document: Option[Document], slug: String)(callback: Either[String, Document] => Result)(implicit r: Prismic.Request[_]) = {
     document.collect {
-      case document if document.slug == slug => callback(Right(document))
+      case document if document.slug == slug         => callback(Right(document))
       case document if document.slugs.contains(slug) => callback(Left(document.slug))
     }.getOrElse {
       Application.PageNotFound
     }
   }
 
-  // --
-  // -- OAuth actions
-  // --
-  
-  def signin = Action.async { implicit req =>
-    for(api <- apiHome()) yield {
-      Redirect(api.oauthInitiateEndpoint, Map(
-        "client_id" -> Seq(config("prismic.clientId")),
-        "redirect_uri" -> Seq(callbackUrl),
-        "scope" -> Seq("master+releases")
-      ))
-    }
-  }
-
-  def signout = Action {
-    Redirect(routes.Application.index(ref = None)).withNewSession
-  }
-
-  def callback(code: Option[String], redirect_uri: Option[String]) = Action.async { implicit req =>
-    (
-      for {
-        api <- apiHome()
-        tokenResponse <- WS.url(api.oauthTokenEndpoint).post(Map(
-          "grant_type" -> Seq("authorization_code"),
-          "code" -> Seq(code.get),
-          "redirect_uri" -> Seq(callbackUrl),
-          "client_id" -> Seq(config("prismic.clientId")),
-          "client_secret" -> Seq(config("prismic.clientSecret"))
-        )).filter(_.status == 200).map(_.json)
-      } yield { 
-        Redirect(redirect_uri.getOrElse(routes.Application.index(ref = None).url)).withSession(
-          ACCESS_TOKEN -> (tokenResponse \ "access_token").as[String]
-        )
-      }
-    ).recover {
-      case x: Throwable => 
-        Logger('ERROR, s"""Can't retrieve the OAuth token for code $code: ${x.getMessage}""".stripMargin)
-        Unauthorized("Can't sign you in")
+  // -- Preview Action
+  def preview(token: String) = Prismic.action { implicit req =>
+    ctx.api.previewSession(token, ctx.linkResolver, routes.Application.index.url).map { redirectUrl =>
+      Redirect(redirectUrl).withCookies(Cookie(io.prismic.Prismic.previewCookie, token, path = "/", maxAge = Some(30 * 60 * 1000), httpOnly = false))
     }
   }
 
