@@ -55,8 +55,7 @@ object Prismic extends Controller {
 
   // -- Build a Prismic context
   def buildContext(implicit request: RequestHeader) = {
-    val maybeAccessToken = Play.configuration.getString("prismic.token")
-    apiHome(maybeAccessToken) map { api =>
+    apiHome(None) map { api =>
       val ref = { 
         // First check if there is a preview token in a cookie
         request.cookies.get(io.prismic.Prismic.previewCookie).map(_.value)
@@ -67,7 +66,7 @@ object Prismic extends Controller {
         // Otherwise use the master ref 
         api.master.ref
       }
-      Context(api, ref, maybeAccessToken, Application.linkResolver(api)(request))
+      Context(api, ref, None, Application.linkResolver(api)(request))
     }
   }
 
@@ -93,8 +92,9 @@ object Prismic extends Controller {
 
   // -- Fetch the API entry document
   def apiHome(accessToken: Option[String] = None)(implicit rh: RequestHeader) = {
-    Helpers.prismicRepository.map { repository =>
-      Api.get(s"https://$repository.prismic.io/api", accessToken = accessToken, cache = Cache, logger = Logger)
+    Helpers.prismicRepository.map {
+      case "lesbonneschoses" => Api.get(config("prismic.api"), accessToken = accessToken, cache = Cache, logger = Logger)
+      case repository => Api.get(s"https://$repository.prismic.io/api", accessToken = accessToken, cache = Cache, logger = Logger)
     }.getOrElse {
       sys.error("How can we get there without a proper URL?")
     }
