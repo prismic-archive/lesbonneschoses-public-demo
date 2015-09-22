@@ -30,42 +30,12 @@ object Helpers {
  *
  * It uses some helpers provided by `controllers.Prismic`
  */
-object Application extends Controller {
+class Application extends Controller {
 
   import Prismic._
 
-  // -- Resolve links to documents
-  def linkResolver(api: Api)(implicit request: RequestHeader) = DocumentLinkResolver(api) {
-
-    // For "Bookmarked" documents that use a special page
-    case (Fragment.DocumentLink(_, _, _, _, _), Some("about")) => routes.Application.about.absoluteURL()
-    case (Fragment.DocumentLink(_, _, _, _, _), Some("jobs")) => routes.Application.jobs.absoluteURL()
-    case (Fragment.DocumentLink(_, _, _, _, _), Some("stores")) => routes.Application.stores.absoluteURL()
-
-    // Store documents
-    case (Fragment.DocumentLink(id, "store", _, slug, false), _) => routes.Application.storeDetail(id, slug).absoluteURL()
-
-    // Any product
-    case (Fragment.DocumentLink(id, "product", _, slug, false), _) => routes.Application.productDetail(id, slug).absoluteURL()
-
-    // Product selection
-    case (Fragment.DocumentLink(id, "selection", _, slug, false), _) => routes.Application.selectionDetail(id, slug).absoluteURL()
-
-    // Job offers
-    case (Fragment.DocumentLink(id, "job-offer", _, slug, false), _) => routes.Application.jobDetail(id, slug).absoluteURL()
-
-    // Blog
-    case (Fragment.DocumentLink(id, "blog-post", _, slug, false), _) => routes.Application.blogPost(id, slug).absoluteURL()
-
-    case anyOtherLink => routes.Application.brokenLink.absoluteURL()
-  }
-
-  // -- Page not found
-
-  def PageNotFound(implicit ctx: Prismic.Context) = NotFound(views.html.pageNotFound())
-
   def brokenLink = Prismic.action { implicit request =>
-    Future.successful(PageNotFound)
+    Future.successful(Application.PageNotFound)
   }
 
   // -- Home page
@@ -85,7 +55,7 @@ object Application extends Controller {
     for {
       maybePage <- getBookmark("about")
     } yield {
-      maybePage.map(page => Ok(views.html.about(page))).getOrElse(PageNotFound)
+      maybePage.map(page => Ok(views.html.about(page))).getOrElse(Application.PageNotFound)
     }
   }
 
@@ -96,7 +66,7 @@ object Application extends Controller {
       maybePage <- getBookmark("jobs")
       jobs <- ctx.api.forms("jobs").ref(ctx.ref).submit()
     } yield {
-      maybePage.map(page => Ok(views.html.jobs(page, jobs.results))).getOrElse(PageNotFound)
+      maybePage.map(page => Ok(views.html.jobs(page, jobs.results))).getOrElse(Application.PageNotFound)
     }
   }
 
@@ -109,7 +79,7 @@ object Application extends Controller {
         case Left(newSlug) => MovedPermanently(routes.Application.jobDetail(id, newSlug).url)
         case Right(job) => maybePage.map { page =>
           Ok(views.html.jobDetail(page, job))
-        }.getOrElse(PageNotFound)
+        }.getOrElse(Application.PageNotFound)
       }
     }
   }
@@ -121,7 +91,7 @@ object Application extends Controller {
       maybePage <- getBookmark("stores")
       stores <- ctx.api.forms("stores").ref(ctx.ref).submit()
     } yield {
-      maybePage.map(page => Ok(views.html.stores(page, stores.results))).getOrElse(PageNotFound)
+      maybePage.map(page => Ok(views.html.stores(page, stores.results))).getOrElse(Application.PageNotFound)
     }
   }
 
@@ -142,7 +112,7 @@ object Application extends Controller {
     for {
       maybeSelection <- getDocument(id)
       products <- getDocuments(maybeSelection.map(_.getAll("selection.product").collect {
-        case Fragment.DocumentLink(id, "product", _, _, false) => id
+        case Fragment.DocumentLink(id, _, "product", _, _, _, false) => id
       }).getOrElse(Nil): _*)
     } yield {
       checkSlug(maybeSelection, slug) {
@@ -153,12 +123,6 @@ object Application extends Controller {
   }
 
   // -- Blog
-
-  val BlogCategories = List(
-    "Announcements",
-    "Do it yourself",
-    "Behind the scenes"
-  )
 
   def blog(maybeCategory: Option[String]) = Prismic.action { implicit request =>
     for {
@@ -174,10 +138,10 @@ object Application extends Controller {
     for {
       maybePost <- getDocument(id)
       relatedProducts <- getDocuments(maybePost.map(_.getAll("blog-post.relatedproduct").collect {
-        case Fragment.DocumentLink(id, "product", _, _, false) => id
+        case Fragment.DocumentLink(id, _, "product", _, _, _, false) => id
       }).getOrElse(Nil): _*)
       relatedPosts <- getDocuments(maybePost.map(_.getAll("blog-post.relatedpost").collect {
-        case Fragment.DocumentLink(id, "blog-post", _, _, false) => id
+        case Fragment.DocumentLink(id, _, "blog-post", _, _, _, false) => id
       }).getOrElse(Nil): _*)
     } yield {
       checkSlug(maybePost, slug) {
@@ -188,12 +152,6 @@ object Application extends Controller {
   }
 
   // -- Products
-
-  val ProductCategories = collection.immutable.ListMap(
-    "Macaron" -> "Macarons",
-    "Cupcake" -> "Cup Cakes",
-    "Pie" -> "Little Pies"
-  )
 
   def products = Prismic.action { implicit request =>
     for {
@@ -207,7 +165,7 @@ object Application extends Controller {
     for {
       maybeProduct <- getDocument(id)
       relatedProducts <- getDocuments(maybeProduct.map(_.getAll("product.related").collect {
-        case Fragment.DocumentLink(id, "product", _, _, false) => id
+        case Fragment.DocumentLink(id, _, "product", _, _, _, false) => id
       }).getOrElse(Nil): _*)
     } yield {
       checkSlug(maybeProduct, slug) {
@@ -222,7 +180,7 @@ object Application extends Controller {
       products <- ctx.api.forms("everything").query(s"""[[:d = at(my.product.flavour, "$flavour")]]""").ref(ctx.ref).submit()
     } yield {
       if (products.results.isEmpty) {
-        PageNotFound
+        Application.PageNotFound
       }
       else {
         Ok(views.html.productsByFlavour(flavour, products.results))
@@ -243,6 +201,61 @@ object Application extends Controller {
     }.getOrElse {
       Future.successful(Ok(views.html.search()))
     }
+  }
+
+  // -- Preview Action
+
+  def preview(token: String) = Prismic.action { implicit req =>
+    ctx.api.previewSession(token, ctx.linkResolver, routes.Application.index.url).map { redirectUrl =>
+      Redirect(redirectUrl).withCookies(Cookie(io.prismic.Prismic.previewCookie, token, path = "/", maxAge = Some(30 * 60), httpOnly = false))
+    }
+  }
+
+}
+
+object Application {
+
+  val BlogCategories = List(
+    "Announcements",
+    "Do it yourself",
+    "Behind the scenes"
+  )
+
+  val ProductCategories = collection.immutable.ListMap(
+    "Macaron" -> "Macarons",
+    "Cupcake" -> "Cup Cakes",
+    "Pie" -> "Little Pies"
+  )
+
+  // -- Page not found
+
+  def PageNotFound(implicit ctx: Prismic.Context) = Results.NotFound(views.html.pageNotFound())
+
+  // -- Resolve links to documents
+
+  def linkResolver(api: Api)(implicit request: RequestHeader) = DocumentLinkResolver(api) {
+
+    // For "Bookmarked" documents that use a special page
+    case (link@Fragment.DocumentLink, Some("about")) => routes.Application.about.absoluteURL()
+    case (link@Fragment.DocumentLink, Some("jobs")) => routes.Application.jobs.absoluteURL()
+    case (link@Fragment.DocumentLink, Some("stores")) => routes.Application.stores.absoluteURL()
+
+    // Store documents
+    case (Fragment.DocumentLink(id, _, "store", _, slug, _, false), _) => routes.Application.storeDetail(id, slug).absoluteURL()
+
+    // Any product
+    case (Fragment.DocumentLink(id, _, "product", _, slug, _, false), _) => routes.Application.productDetail(id, slug).absoluteURL()
+
+    // Product selection
+    case (Fragment.DocumentLink(id, _, "selection", _, slug, _, false), _) => routes.Application.selectionDetail(id, slug).absoluteURL()
+
+    // Job offers
+    case (Fragment.DocumentLink(id, _, "job-offer", _, slug, _, false), _) => routes.Application.jobDetail(id, slug).absoluteURL()
+
+    // Blog
+    case (Fragment.DocumentLink(id, _, "blog-post", _, slug, _, false), _) => routes.Application.blogPost(id, slug).absoluteURL()
+
+    case anyOtherLink => routes.Application.brokenLink.absoluteURL()
   }
 
 }

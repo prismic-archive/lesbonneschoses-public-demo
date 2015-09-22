@@ -53,14 +53,14 @@ object Prismic extends Controller {
   // -- Build a Prismic context
   def buildContext(implicit request: RequestHeader) = {
     apiHome(None) map { api =>
-      val ref = { 
+      val ref = {
         // First check if there is a preview token in a cookie
         request.cookies.get(io.prismic.Prismic.previewCookie).map(_.value)
       }.orElse {
         // Otherwise check if user must see a specific experiment variation
         request.cookies.get(io.prismic.Prismic.experimentsCookie).map(_.value).flatMap(api.experiments.refFromCookie)
       }.getOrElse {
-        // Otherwise use the master ref 
+        // Otherwise use the master ref
         api.master.ref
       }
       Context(api, ref, None, Application.linkResolver(api)(request))
@@ -127,13 +127,6 @@ object Prismic extends Controller {
       case document if document.slugs.contains(slug) => callback(Left(document.slug))
     }.getOrElse {
       Application.PageNotFound
-    }
-  }
-
-  // -- Preview Action
-  def preview(token: String) = Prismic.action { implicit req =>
-    ctx.api.previewSession(token, ctx.linkResolver, routes.Application.index.url).map { redirectUrl =>
-      Redirect(redirectUrl).withCookies(Cookie(io.prismic.Prismic.previewCookie, token, path = "/", maxAge = Some(30 * 60), httpOnly = false))
     }
   }
 

@@ -19,7 +19,7 @@ object Global extends GlobalSettings {
 
   override def onHandlerNotFound(request: RequestHeader) = {
     Prismic.buildContext(request).map { api =>
-      Application.PageNotFound(api)
+      controllers.Application.PageNotFound(api)
     }
   }
 
